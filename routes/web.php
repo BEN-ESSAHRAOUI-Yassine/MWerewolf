@@ -1,5 +1,6 @@
 <?php
 
+use App\Http\Controllers\DashboardController;
 use App\Http\Controllers\Games\GameController;
 use App\Http\Controllers\Games\NarratorController;
 use App\Http\Controllers\Games\VoteController;
@@ -11,7 +12,7 @@ Route::inertia('/', 'welcome', [
 ])->name('home');
 
 Route::middleware(['auth', 'verified'])->group(function () {
-    Route::inertia('dashboard', 'dashboard')->name('dashboard');
+    Route::get('dashboard', DashboardController::class)->name('dashboard');
 
     Route::prefix('games')->name('games.')->group(function () {
         Route::get('/', [GameController::class, 'index'])->name('index');
@@ -26,6 +27,8 @@ Route::middleware(['auth', 'verified'])->group(function () {
         Route::post('{game}/start-voting', [NarratorController::class, 'startVoting'])->name('start-voting');
         Route::post('{game}/resolve-votes', [NarratorController::class, 'resolveVotes'])->name('resolve-votes');
         Route::post('{game}/night-action', [NarratorController::class, 'nightAction'])->name('night-action');
+        Route::post('{game}/skip-action', [NarratorController::class, 'skipAction'])->name('skip-action');
+        Route::post('{game}/heartbeat', [NarratorController::class, 'heartbeat'])->name('heartbeat');
         Route::post('{game}/end', [NarratorController::class, 'endGame'])->name('end');
 
         Route::post('{game}/vote', [VoteController::class, 'cast'])->name('vote');

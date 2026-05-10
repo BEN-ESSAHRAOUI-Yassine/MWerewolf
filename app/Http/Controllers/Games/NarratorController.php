@@ -93,6 +93,35 @@ class NarratorController extends Controller
         return redirect()->route('games.show', $game);
     }
 
+    public function skipAction(Request $request, Game $game): RedirectResponse
+    {
+        $this->ensureGamePlaying($game);
+
+        $validated = $request->validate([
+            'player_id' => 'required|exists:game_players,id',
+        ]);
+
+        $player = GamePlayer::findOrFail($validated['player_id']);
+
+        $this->engine->skipNightAction($game, $player);
+
+        return redirect()->route('games.show', $game);
+    }
+
+    public function heartbeat(Game $game): \Illuminate\Http\JsonResponse
+    {
+        $ticked = $this->engine->autoTick($game);
+
+        $game->load(['players.role', 'players.actions', 'votes', 'events', 'actions']);
+
+        return response()->json([
+            'ticked' => $ticked,
+            'phase' => $game->current_phase,
+            'status' => $game->status,
+            'phase_ends_at' => $game->phase_ends_at?->toIso8601String(),
+        ]);
+    }
+
     public function endGame(Request $request, Game $game): RedirectResponse
     {
         $this->ensureGamePlaying($game);

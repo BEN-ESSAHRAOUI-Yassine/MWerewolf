@@ -59,6 +59,10 @@ class GameController extends Controller
 
     public function show(Game $game): Response
     {
+        if ($game->status === 'playing' && $game->mode === 'auto_narrator') {
+            $this->engine->autoTick($game);
+        }
+
         $game->load(['players.role', 'players.actions', 'votes', 'events', 'actions']);
 
         $game->loadCount('players');

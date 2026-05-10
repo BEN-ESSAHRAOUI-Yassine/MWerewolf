@@ -19,9 +19,12 @@ class GameEngine
         DB::transaction(function () use ($game, $roleComposition) {
             $this->assignRoles($game, $roleComposition);
 
+            $duration = $game->mode === 'auto_narrator' ? self::PHASE_DURATIONS['night'] : null;
+
             $game->update([
                 'status' => 'playing',
                 'current_phase' => 'night',
+                'phase_ends_at' => $duration ? now()->addSeconds($duration) : null,
                 'round' => 1,
             ]);
 
@@ -54,15 +57,30 @@ class GameEngine
         }
     }
 
-    public function changePhase(Game $game, string $phase): void
+    public const PHASE_DURATIONS = [
+        'night' => 45,
+        'day' => 120,
+        'voting' => 45,
+    ];
+
+    public function changePhase(Game $game, string $phase, ?int $durationSeconds = null): void
     {
         $validPhases = ['night', 'day', 'voting'];
         if (!in_array($phase, $validPhases)) {
             throw new \InvalidArgumentException("Invalid phase: $phase");
         }
 
-        $game->update(['current_phase' => $phase, 'phase_ends_at' => null]);
-        $this->logEvent($game, 'phase_change', ['phase' => $phase]);
+        $duration = $durationSeconds ?? (self::PHASE_DURATIONS[$phase] ?? null);
+        $phaseEndsAt = $duration ? now()->addSeconds($duration) : null;
+
+        $game->update([
+            'current_phase' => $phase,
+            'phase_ends_at' => $phaseEndsAt,
+        ]);
+        $this->logEvent($game, 'phase_change', [
+            'phase' => $phase,
+            'duration_seconds' => $duration,
+        ]);
     }
 
     public function advanceToDay(Game $game): array
@@ -75,6 +93,62 @@ class GameEngine
         $this->snapshot($game);
 
         return $results;
+    }
+
+    public function autoTick(Game $game): bool
+    {
+        if ($game->status !== 'playing' || $game->mode !== 'auto_narrator') {
+            return false;
+        }
+
+        if ($game->current_phase === 'night' && $this->allNightActionsComplete($game)) {
+            $this->autoAdvanceNight($game);
+            return true;
+        }
+
+        if ($game->current_phase === 'voting' && $this->allVotesComplete($game, $game->round)) {
+            $this->autoAdvanceVoting($game);
+            return true;
+        }
+
+        if (!$game->phase_ends_at || now()->lessThan($game->phase_ends_at)) {
+            return false;
+        }
+
+        return match ($game->current_phase) {
+            'night' => $this->autoAdvanceNight($game),
+            'day' => $this->autoAdvanceDay($game),
+            'voting' => $this->autoAdvanceVoting($game),
+            default => false,
+        };
+    }
+
+    private function autoAdvanceNight(Game $game): bool
+    {
+        $this->advanceToDay($game);
+        return true;
+    }
+
+    private function autoAdvanceDay(Game $game): bool
+    {
+        $this->changePhase($game, 'voting');
+        $this->logEvent($game, 'day_results', ['message' => 'Discussion time ended. Starting vote.']);
+        $this->snapshot($game);
+        return true;
+    }
+
+    private function autoAdvanceVoting(Game $game): bool
+    {
+        $this->processVotes($game, $game->round);
+        $winner = $this->checkWinCondition($game);
+
+        if (!$winner) {
+            $game->increment('round');
+            $this->changePhase($game, 'night');
+        }
+
+        $this->snapshot($game);
+        return true;
     }
 
     public function processNightActions(Game $game): array
@@ -188,6 +262,44 @@ class GameEngine
 
         $this->logEvent($game, 'game_end', ['winner' => $winner]);
         $this->snapshot($game);
+    }
+
+    public function skipNightAction(Game $game, GamePlayer $player): GameAction
+    {
+        return $this->recordAction($game, $player, 'skip', null, ['skipped' => true]);
+    }
+
+    public function allNightActionsComplete(Game $game): bool
+    {
+        $alivePlayers = $game->players()->where('is_alive', true)->with('role.actions')->get();
+
+        $actors = $alivePlayers->filter(fn($p) => $p->role && $p->role->actions->where('phase', 'night')->isNotEmpty());
+
+        if ($actors->isEmpty()) {
+            return true;
+        }
+
+        $nightActions = GameAction::where('game_id', $game->id)
+            ->where('phase', 'night')
+            ->whereIn('player_id', $actors->pluck('id'))
+            ->get();
+
+        foreach ($actors as $actor) {
+            $hasActed = $nightActions->where('player_id', $actor->id)->isNotEmpty();
+            if (!$hasActed) {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    public function allVotesComplete(Game $game, int $round): bool
+    {
+        $aliveCount = $game->players()->where('is_alive', true)->count();
+        $voteCount = Vote::where('game_id', $game->id)->where('round', $round)->count();
+
+        return $voteCount >= $aliveCount;
     }
 
     public function recordAction(Game $game, GamePlayer $player, string $type, ?int $targetPlayerId, array $metadata = []): GameAction

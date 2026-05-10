@@ -1,9 +1,9 @@
-import { Head, useForm, usePage } from '@inertiajs/react';
-import { useState, useEffect } from 'react';
+import { Head, useForm, router } from '@inertiajs/react';
+import { useState, useEffect, useCallback } from 'react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { show, start, advanceToDay, startVoting, resolveVotes, vote, nightAction, end as endRoute } from '@/routes/games';
+import { show, start, advanceToDay, startVoting, resolveVotes, vote, nightAction, skipAction, end as endRoute, heartbeat } from '@/routes/games';
 import InputError from '@/components/input-error';
 
 type Game = {
@@ -12,6 +12,7 @@ type Game = {
     status: string;
     mode: string;
     current_phase: string | null;
+    phase_ends_at: string | null;
     round: number;
     players: GamePlayer[];
     votes: Vote[];
@@ -78,6 +79,34 @@ type Props = {
     myRole: Role | null;
     availableRoles: AvailableRole[];
 };
+
+function CountdownTimer({ phaseEndsAt }: { phaseEndsAt: string | null }) {
+    const [remaining, setRemaining] = useState<number>(0);
+
+    useEffect(() => {
+        if (!phaseEndsAt) return;
+
+        function tick() {
+            const diff = new Date(phaseEndsAt).getTime() - Date.now();
+            setRemaining(Math.max(0, Math.floor(diff / 1000)));
+        }
+
+        tick();
+        const interval = setInterval(tick, 1000);
+        return () => clearInterval(interval);
+    }, [phaseEndsAt]);
+
+    if (!phaseEndsAt || remaining <= 0) return null;
+
+    const minutes = Math.floor(remaining / 60);
+    const seconds = remaining % 60;
+
+    return (
+        <span className={`font-mono text-sm ${remaining < 10 ? 'text-red-400' : 'text-stone-400'}`}>
+            {minutes}:{seconds.toString().padStart(2, '0')}
+        </span>
+    );
+}
 
 function RoleRevealCard({ role }: { role: Role }) {
     const [revealed, setRevealed] = useState(false);
@@ -261,11 +290,17 @@ function PlayerView({ game, myRole, myPlayer }: { game: Game; myRole: Role | nul
 
     const hasVotedThisRound = game.votes?.some(v => v.voter_id === myPlayer.id && v.round === game.round);
 
-    function handleVote() {
-        if (!selectedTarget || confirmed) return;
+    function handleVote(targetId: number | null) {
+        if (targetId === null) {
+            votePost(vote(game.id), {
+                data: { target_id: myPlayer.id },
+                preserveScroll: true,
+            });
+            return;
+        }
         setConfirmed(true);
         votePost(vote(game.id), {
-            data: { target_id: selectedTarget },
+            data: { target_id: targetId },
             preserveScroll: true,
             onSuccess: () => {
                 setConfirmed(false);
@@ -275,7 +310,7 @@ function PlayerView({ game, myRole, myPlayer }: { game: Game; myRole: Role | nul
     }
 
     const myEvents = game.events?.filter(e => {
-        if (e.type === 'death' && e.payload?.player_id === myPlayer.id) return true;
+        if (e.type === 'death' && (e.payload as any)?.player_id === myPlayer.id) return true;
         return false;
     }) || [];
 
@@ -337,13 +372,33 @@ function PlayerView({ game, myRole, myPlayer }: { game: Game; myRole: Role | nul
                         {voteErrors.vote && <InputError message={voteErrors.vote} className="mt-2" />}
                     </CardContent>
                     {selectedTarget && (
-                        <div className="px-6 pb-6">
+                        <div className="space-y-2 px-6 pb-6">
                             <Button
-                                onClick={handleVote}
+                                onClick={() => handleVote(selectedTarget)}
                                 disabled={voteProcessing}
                                 className="w-full bg-amber-700 text-amber-100 hover:bg-amber-600"
                             >
                                 {confirmed ? 'Confirming...' : `Vote to Eliminate`}
+                            </Button>
+                            <Button
+                                onClick={() => { setSelectedTarget(null); handleVote(null); }}
+                                disabled={voteProcessing}
+                                variant="outline"
+                                className="w-full border-stone-700 text-stone-400 hover:bg-stone-800 hover:text-stone-300"
+                            >
+                                Abstain
+                            </Button>
+                        </div>
+                    )}
+                    {!selectedTarget && (
+                        <div className="px-6 pb-6">
+                            <Button
+                                onClick={() => handleVote(null)}
+                                disabled={voteProcessing}
+                                variant="outline"
+                                className="w-full border-stone-700 text-stone-400 hover:bg-stone-800 hover:text-stone-300"
+                            >
+                                Abstain (Skip Vote)
                             </Button>
                         </div>
                     )}
@@ -366,11 +421,26 @@ function PlayerView({ game, myRole, myPlayer }: { game: Game; myRole: Role | nul
             )}
 
             {game.current_phase === 'day' && (
-                <div className="rounded-xl border border-amber-900/30 bg-amber-950/20 p-4 text-center">
-                    <p className="text-sm text-amber-300">Day Phase — Discuss freely</p>
-                    <p className="mt-1 text-xs text-stone-500">
-                        Put down your phones and talk to each other
-                    </p>
+                <Card className="border-amber-900/30 bg-amber-950/20">
+                    <CardHeader className="pb-2 text-center">
+                        <CardTitle className="text-lg text-amber-300">Day Phase</CardTitle>
+                        <CardDescription className="text-amber-400/60">
+                            Discuss freely with other players
+                        </CardDescription>
+                    </CardHeader>
+                    <CardContent className="text-center">
+                        <p className="text-sm text-stone-500">
+                            Put down your phones and talk to each other.
+                            {game.mode === 'auto_narrator' && ' Voting will begin when the timer ends.'}
+                        </p>
+                    </CardContent>
+                </Card>
+            )}
+
+            {game.current_phase === 'night' && !myRole?.slug && (
+                <div className="rounded-xl border border-indigo-900/30 bg-indigo-950/20 p-4 text-center">
+                    <p className="text-sm text-indigo-300">Night Phase — Close your eyes</p>
+                    <p className="mt-1 text-xs text-stone-500">Wait for the narrator to call you...</p>
                 </div>
             )}
 
@@ -388,15 +458,23 @@ function NightActionPanel({ game, myPlayer, myRole }: { game: Game; myPlayer: Ga
 
     const eligibleTargets = game.players.filter(p => p.is_alive && p.id !== myPlayer.id);
 
+    if (hasActed.length > 0) {
+        return (
+            <div className="mb-4 rounded-xl border border-indigo-900/30 bg-indigo-950/20 p-4 text-center">
+                <p className="text-sm text-indigo-300">You have chosen your target</p>
+                <p className="mt-1 text-xs text-stone-500">Wait for the night to end...</p>
+            </div>
+        );
+    }
+
+    async function handleSkip() {
+        post(skipAction(game.id), {
+            data: { player_id: myPlayer.id },
+            preserveScroll: true,
+        });
+    }
+
     if (myRole.slug === 'werewolf') {
-        if (hasActed.length > 0) {
-            return (
-                <div className="mb-4 rounded-xl border border-indigo-900/30 bg-indigo-950/20 p-4 text-center">
-                    <p className="text-sm text-indigo-300">You have chosen your target</p>
-                    <p className="mt-1 text-xs text-stone-500">Wait for the night to end...</p>
-                </div>
-            );
-        }
         return (
             <Card className="mb-4 border-indigo-700/50 bg-stone-900/80">
                 <CardHeader>
@@ -418,32 +496,34 @@ function NightActionPanel({ game, myPlayer, myRole }: { game: Game; myPlayer: Ga
                             </button>
                         ))}
                     </div>
-                    {data.target_id && (
+                    <div className="mt-3 space-y-2">
+                        {data.target_id && (
+                            <Button
+                                onClick={() => post(nightAction(game.id), {
+                                    data: { player_id: myPlayer.id, type: 'kill', target_id: data.target_id },
+                                    preserveScroll: true,
+                                })}
+                                disabled={processing}
+                                className="w-full bg-indigo-800 text-indigo-200 hover:bg-indigo-700"
+                            >
+                                Attack
+                            </Button>
+                        )}
                         <Button
-                            onClick={() => post(nightAction(game.id), {
-                                data: { player_id: myPlayer.id, type: 'kill', target_id: data.target_id },
-                                preserveScroll: true,
-                            })}
+                            onClick={handleSkip}
                             disabled={processing}
-                            className="mt-3 w-full bg-indigo-800 text-indigo-200 hover:bg-indigo-700"
+                            variant="outline"
+                            className="w-full border-stone-700 text-stone-400 hover:bg-stone-800 hover:text-stone-300"
                         >
-                            Attack
+                            Skip (Don't attack)
                         </Button>
-                    )}
+                    </div>
                 </CardContent>
             </Card>
         );
     }
 
     if (myRole.slug === 'seer') {
-        if (hasActed.length > 0) {
-            return (
-                <div className="mb-4 rounded-xl border border-purple-900/30 bg-purple-950/20 p-4 text-center">
-                    <p className="text-sm text-purple-300">You have used your sight</p>
-                    <p className="mt-1 text-xs text-stone-500">Wait for the night to end...</p>
-                </div>
-            );
-        }
         return (
             <Card className="mb-4 border-purple-700/50 bg-stone-900/80">
                 <CardHeader>
@@ -465,18 +545,28 @@ function NightActionPanel({ game, myPlayer, myRole }: { game: Game; myPlayer: Ga
                             </button>
                         ))}
                     </div>
-                    {data.target_id && (
+                    <div className="mt-3 space-y-2">
+                        {data.target_id && (
+                            <Button
+                                onClick={() => post(nightAction(game.id), {
+                                    data: { player_id: myPlayer.id, type: 'inspect', target_id: data.target_id },
+                                    preserveScroll: true,
+                                })}
+                                disabled={processing}
+                                className="w-full bg-purple-800 text-purple-200 hover:bg-purple-700"
+                            >
+                                Inspect
+                            </Button>
+                        )}
                         <Button
-                            onClick={() => post(nightAction(game.id), {
-                                data: { player_id: myPlayer.id, type: 'inspect', target_id: data.target_id },
-                                preserveScroll: true,
-                            })}
+                            onClick={handleSkip}
                             disabled={processing}
-                            className="mt-3 w-full bg-purple-800 text-purple-200 hover:bg-purple-700"
+                            variant="outline"
+                            className="w-full border-stone-700 text-stone-400 hover:bg-stone-800 hover:text-stone-300"
                         >
-                            Inspect
+                            Skip (Don't inspect)
                         </Button>
-                    )}
+                    </div>
                 </CardContent>
             </Card>
         );
@@ -499,6 +589,14 @@ function NightActionPanel({ game, myPlayer, myRole }: { game: Game; myPlayer: Ga
                     buttonClass="bg-red-800 text-red-200 hover:bg-red-700"
                     label="Use Kill Potion"
                 />
+                <Button
+                    onClick={handleSkip}
+                    disabled={processing}
+                    variant="outline"
+                    className="w-full border-stone-700 text-stone-400 hover:bg-stone-800 hover:text-stone-300"
+                >
+                    Skip Both (Do nothing tonight)
+                </Button>
             </div>
         );
     }
@@ -520,11 +618,14 @@ function WitchActionPanel({ game, myPlayer, actionType, buttonClass, label }: {
 }) {
     const { data, setData, post, processing } = useForm({ target_id: '' });
 
-    const hasActed = game.players
+    const myNightActions = game.players
         .flatMap(p => p.actions || [])
-        .filter(a => a.player_id === myPlayer.id && a.type === actionType && a.phase === 'night');
+        .filter(a => a.player_id === myPlayer.id && a.phase === 'night');
 
-    if (hasActed.length > 0) {
+    const hasUsedThis = myNightActions.filter(a => a.type === actionType).length > 0;
+    const hasSkipped = myNightActions.filter(a => a.type === 'skip').length > 0;
+
+    if (hasUsedThis || hasSkipped) {
         return null;
     }
 
@@ -575,8 +676,6 @@ function NarratorDashboard({ game }: { game: Game }) {
 
     const alivePlayers = game.players.filter(p => p.is_alive);
     const deadPlayers = game.players.filter(p => !p.is_alive);
-    const wolves = game.players.filter(p => p.role?.faction === 'werewolf');
-    const villagers = game.players.filter(p => p.role?.faction === 'village');
 
     return (
         <div className="mx-auto max-w-4xl">
@@ -654,11 +753,12 @@ function NarratorDashboard({ game }: { game: Game }) {
                     </CardHeader>
                     <CardContent className="space-y-3">
                         <div className="space-y-1">
-                            <p className="text-xs text-stone-400">Night deaths (recorded)</p>
+                            <p className="text-xs text-stone-400">Night actions (recorded)</p>
                             <NightActionLog game={game} type="kill" label="Wolf Attack" />
                             <NightActionLog game={game} type="save" label="Witch Save" />
                             <NightActionLog game={game} type="kill" label="Witch Kill" icon="witch_kill" />
                             <NightActionLog game={game} type="inspect" label="Seer Inspect" />
+                            <NightActionLog game={game} type="skip" label="Skipped" />
                         </div>
                     </CardContent>
                 </Card>
@@ -669,7 +769,7 @@ function NarratorDashboard({ game }: { game: Game }) {
                     <CardHeader>
                         <CardTitle className="text-amber-100">All Players</CardTitle>
                         <CardDescription className="text-stone-400">
-                            {game.mode === 'human_narrator' ? 'Roles visible to narrator only' : 'All roles visible'}
+                            Roles visible to narrator only
                         </CardDescription>
                     </CardHeader>
                     <CardContent>
@@ -763,14 +863,16 @@ function NightActionLog({ game, type, label, icon }: { game: Game; type: string;
         p.actions?.filter(a => a.type === (icon || type) && a.phase === 'night') || []
     );
 
-    if (actions.length === 0) return null;
+    if (actions.length === 0 && type !== 'skip') return null;
 
     return (
         <div className="rounded bg-stone-800/30 px-3 py-1.5 text-xs text-stone-400">
-            {label}: {actions.map(a => {
-                const target = game.players.find(p => p.id === a.target_player_id);
-                return target?.name || 'unknown';
-            }).join(', ')}
+            {label}: {actions.length > 0
+                ? actions.map(a => {
+                    const target = game.players.find(p => p.id === a.target_player_id);
+                    return target?.name || '(skipped)';
+                  }).join(', ')
+                : '—'}
         </div>
     );
 }
@@ -800,7 +902,7 @@ function PlayerList({ players, title }: { players: GamePlayer[]; title: string }
 
 function FinishedView({ game, isHost }: { game: Game; isHost: boolean }) {
     const lastEvent = game.events?.filter(e => e.type === 'game_end').pop();
-    const winner = lastEvent?.payload?.winner as string || 'unknown';
+    const winner = (lastEvent?.payload as any)?.winner as string || 'unknown';
 
     return (
         <div className="mx-auto max-w-lg text-center">
@@ -841,6 +943,32 @@ function FinishedView({ game, isHost }: { game: Game; isHost: boolean }) {
 }
 
 export default function Show({ game, isHost, myPlayer, myRole, availableRoles }: Props) {
+    const [phaseEndsAt, setPhaseEndsAt] = useState<string | null>(game.phase_ends_at);
+
+    useEffect(() => {
+        setPhaseEndsAt(game.phase_ends_at);
+    }, [game.phase_ends_at]);
+
+    useEffect(() => {
+        if (game.status !== 'playing' || game.mode !== 'auto_narrator') return;
+
+        const interval = setInterval(async () => {
+            try {
+                const resp = await fetch(heartbeat(game.id).url, { method: 'POST' });
+                const data = await resp.json();
+                if (data.ticked || data.phase !== game.current_phase || data.status !== game.status) {
+                    router.reload({ only: ['game'] });
+                } else if (data.phase_ends_at) {
+                    setPhaseEndsAt(data.phase_ends_at);
+                }
+            } catch {
+                // ignore polling errors
+            }
+        }, 3000);
+
+        return () => clearInterval(interval);
+    }, [game.id, game.status, game.mode, game.current_phase]);
+
     if (game.status === 'waiting') {
         return (
             <>
@@ -871,6 +999,7 @@ export default function Show({ game, isHost, myPlayer, myRole, availableRoles }:
                     <div className="flex items-center gap-3">
                         <span className="font-mono text-lg text-amber-100/60">{game.code}</span>
                         <PhaseBadge phase={game.current_phase} />
+                        <CountdownTimer phaseEndsAt={phaseEndsAt} />
                     </div>
                     <span className="text-xs text-stone-500">Round {game.round}</span>
                 </div>
