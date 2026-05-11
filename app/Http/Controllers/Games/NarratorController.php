@@ -79,15 +79,22 @@ class NarratorController extends Controller
             'player_id' => 'required|exists:game_players,id',
             'type' => 'required|string',
             'target_id' => 'nullable|exists:game_players,id',
+            'potion' => 'nullable|string',
         ]);
 
         $player = GamePlayer::findOrFail($validated['player_id']);
+
+        $metadata = [];
+        if (!empty($validated['potion'])) {
+            $metadata['potion'] = $validated['potion'];
+        }
 
         $this->engine->recordAction(
             $game,
             $player,
             $validated['type'],
             $validated['target_id'],
+            $metadata,
         );
 
         return redirect()->route('games.show', $game);
@@ -112,13 +119,16 @@ class NarratorController extends Controller
     {
         $ticked = $this->engine->autoTick($game);
 
-        $game->load(['players.role', 'players.actions', 'votes', 'events', 'actions']);
+        $game->refresh();
+        $game->loadCount('players');
 
         return response()->json([
             'ticked' => $ticked,
             'phase' => $game->current_phase,
             'status' => $game->status,
             'phase_ends_at' => $game->phase_ends_at?->toIso8601String(),
+            'active_role' => $game->active_role,
+            'players_count' => $game->players_count,
         ]);
     }
 
@@ -131,6 +141,68 @@ class NarratorController extends Controller
         $this->engine->endGame($game, $winner ?? 'village');
 
         return redirect()->route('games.show', $game);
+    }
+
+    public function callWerewolves(Game $game): RedirectResponse
+    {
+        $this->ensureGamePlaying($game);
+
+        $game->update([
+            'active_role' => 'werewolf',
+            'called_at' => now(),
+        ]);
+
+        $this->engine->logEvent($game, 'narrator_call', [
+            'role' => 'werewolf',
+            'message' => 'The narrator calls the werewolves...',
+        ]);
+
+        return redirect()->route('games.show', $game);
+    }
+
+    public function callSeer(Game $game): RedirectResponse
+    {
+        $this->ensureGamePlaying($game);
+
+        $game->update([
+            'active_role' => 'seer',
+            'called_at' => now(),
+        ]);
+
+        $this->engine->logEvent($game, 'narrator_call', [
+            'role' => 'seer',
+            'message' => 'The narrator calls the seer...',
+        ]);
+
+        return redirect()->route('games.show', $game);
+    }
+
+    public function callWitch(Game $game): RedirectResponse
+    {
+        $this->ensureGamePlaying($game);
+
+        $game->update([
+            'active_role' => 'witch',
+            'called_at' => now(),
+        ]);
+
+        $this->engine->logEvent($game, 'narrator_call', [
+            'role' => 'witch',
+            'message' => 'The narrator calls the witch...',
+        ]);
+
+        return redirect()->route('games.show', $game);
+    }
+
+    public function concludeNight(Game $game): RedirectResponse
+    {
+        $this->ensureGamePlaying($game);
+
+        $game->update(['active_role' => null]);
+
+        $results = $this->engine->advanceToDay($game);
+
+        return redirect()->route('games.show', $game)->with('nightResults', $results);
     }
 
     private function ensureGamePlaying(Game $game): void

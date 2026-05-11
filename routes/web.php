@@ -31,6 +31,11 @@ Route::middleware(['auth', 'verified'])->group(function () {
         Route::post('{game}/heartbeat', [NarratorController::class, 'heartbeat'])->name('heartbeat');
         Route::post('{game}/end', [NarratorController::class, 'endGame'])->name('end');
 
+        Route::post('{game}/call-werewolves', [NarratorController::class, 'callWerewolves'])->name('call-werewolves');
+        Route::post('{game}/call-seer', [NarratorController::class, 'callSeer'])->name('call-seer');
+        Route::post('{game}/call-witch', [NarratorController::class, 'callWitch'])->name('call-witch');
+        Route::post('{game}/conclude-night', [NarratorController::class, 'concludeNight'])->name('conclude-night');
+
         Route::post('{game}/vote', [VoteController::class, 'cast'])->name('vote');
     });
 });

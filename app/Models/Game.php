@@ -11,12 +11,14 @@ class Game extends Model
     protected $fillable = [
         'code', 'status', 'mode', 'current_phase',
         'phase_ends_at', 'created_by', 'round',
+        'active_role', 'called_at',
     ];
 
     protected function casts(): array
     {
         return [
             'phase_ends_at' => 'datetime',
+            'called_at' => 'datetime',
             'round' => 'integer',
         ];
     }
