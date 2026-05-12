@@ -34,6 +34,23 @@
 ### Story Flow System — COMPLETED ✅
 Added proper narration flow where narrator calls each role one at a time.
 
+### Real-Time Updates (SSE) — COMPLETED ✅
+- Created `GameEventController` with SSE endpoint (`/games/{id}/stream`)
+- Created `useGameStream` hook using EventSource for real-time updates
+- Replaced React Query polling with Server-Sent Events
+- No more heartbeat - instant updates when:
+  - Player joins/leaves lobby
+  - Phase changes (night → day → voting)
+  - Role called (werewolf, seer, witch)
+  - Votes cast
+  - Round advances
+
+### Role Unit Tests — COMPLETED ✅
+- Created 25 unit tests for all 4 roles (Werewolf, Seer, Witch, Villager)
+- Tests cover: role attributes, actions, voting, win conditions, role assignment
+- Created factories for Game, GamePlayer, GameAction, Vote, Role
+- Added `HasFactory` trait to models
+
 **Changes:**
 1. **Database:** Added `active_role` column to games table
 2. **Backend:** Added controller methods `callWerewolves`, `callSeer`, `callWitch`, `concludeNight`
@@ -46,10 +63,19 @@ Added proper narration flow where narrator calls each role one at a time.
 
 ## Remaining Tasks
 
-### Phase 1: Auto-Refresh Fix (IMMEDIATE)
-- [ ] Fix game show page to auto-refresh on state changes
-- [ ] Ensure narrator actions trigger page reload
-- [ ] Ensure player actions trigger page reload
+### Phase 1: Auto-Refresh Fix (IMMEDIATE) — COMPLETED ✅
+- [x] Fix game show page to auto-refresh on state changes
+- [x] Ensure narrator actions trigger page reload
+- [x] Ensure player actions trigger page reload
+
+**Implementation:**
+- Installed `@tanstack/react-query` for state polling
+- Added `QueryClientProvider` to `app.tsx`
+- Created `useGamePolling` hook in `show.tsx` that:
+  - Polls heartbeat endpoint every 2 seconds via React Query
+  - Detects phase/role/status changes and triggers Inertia reload
+  - Replaced all manual `setInterval` + `window.location.reload()` patterns
+  - Now uses proper `router.reload()` via Inertia instead of full page reload
 
 ### Phase 2: UX Polish (NEXT)
 - [ ] Better loading states

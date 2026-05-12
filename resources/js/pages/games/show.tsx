@@ -1,10 +1,22 @@
-import { Head, useForm } from '@inertiajs/react';
-import { useState, useEffect } from 'react';
+import { Head, useForm, router } from '@inertiajs/react';
+import { useEffect } from 'react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { show, start, advanceToDay, startVoting, resolveVotes, vote, nightAction, skipAction, end as endRoute, heartbeat, callWerewolves, callSeer, callWitch, concludeNight } from '@/routes/games';
+import { show, start, advanceToDay, startVoting, resolveVotes, vote, nightAction, skipAction, end as endRoute, callWerewolves, callSeer, callWitch, concludeNight } from '@/routes/games';
 import InputError from '@/components/input-error';
+
+// SSE disabled for testing - re-enable after fixing
+// function useGameStream(gameId: number) {
+//     useEffect(() => {
+//         if (!gameId) return;
+//         const url = `/games/${gameId}/stream`;
+//         const eventSource = new EventSource(url);
+//         eventSource.onmessage = () => router.reload({ only: ['game'] });
+//         eventSource.onerror = () => eventSource.close();
+//         return () => eventSource.close();
+//     }, [gameId]);
+// }
 
 type Game = {
     id: number;
@@ -176,45 +188,7 @@ function WaitingLobby({ game, isHost, availableRoles }: {
         setData('roles', defaults);
     }, [game.players.length]);
 
-    useEffect(() => {
-        if (game.status !== 'waiting') return;
-
-        const controller = new AbortController();
-
-        const interval = setInterval(async () => {
-            if (controller.signal.aborted) return;
-
-            try {
-                const resp = await fetch(heartbeat(game.id).url, {
-                    method: 'POST',
-                    signal: controller.signal,
-                    headers: {
-                        'X-Requested-With': 'XMLHttpRequest',
-                        'Accept': 'application/json',
-                    },
-                });
-
-                if (!resp.ok) return;
-
-                const data = await resp.json();
-
-                if (data.status === 'playing') {
-                    controller.abort();
-                    window.location.reload();
-                } else if (data.players_count !== game.players.length) {
-                    controller.abort();
-                    window.location.reload();
-                }
-            } catch {
-                // ignore
-            }
-        }, 3000);
-
-        return () => {
-            clearInterval(interval);
-            controller.abort();
-        };
-    }, [game.status, game.players.length]);
+    // useGameStream(game.id);
 
     const totalAssigned = Object.values(data.roles).reduce((a, b) => a + b, 0);
     const currentPlayerCount = game.players.length;
@@ -330,42 +304,7 @@ function PlayerView({ game, myRole, myPlayer }: { game: Game; myRole: Role | nul
     const [selectedTarget, setSelectedTarget] = useState<number | null>(null);
     const [confirmed, setConfirmed] = useState(false);
 
-    useEffect(() => {
-        if (game.status !== 'playing') return;
-
-        const controller = new AbortController();
-
-        const interval = setInterval(async () => {
-            if (controller.signal.aborted) return;
-
-            try {
-                const resp = await fetch(heartbeat(game.id).url, {
-                    method: 'POST',
-                    signal: controller.signal,
-                    headers: {
-                        'X-Requested-With': 'XMLHttpRequest',
-                        'Accept': 'application/json',
-                    },
-                });
-
-                if (!resp.ok) return;
-
-                const data = await resp.json();
-
-                if (data.phase !== game.current_phase || data.status !== game.status || data.active_role !== game.active_role) {
-                    controller.abort();
-                    window.location.reload();
-                }
-            } catch {
-                // ignore
-            }
-        }, 2000);
-
-        return () => {
-            clearInterval(interval);
-            controller.abort();
-        };
-    }, [game.id, game.status, game.mode, game.current_phase, game.active_role]);
+    // useGameStream(game.id);
 
     const hasVotedThisRound = game.votes?.some(v => v.voter_id === myPlayer.id && v.round === game.round);
 
@@ -898,42 +837,7 @@ function NarratorDashboard({ game }: { game: Game }) {
     const alivePlayers = game.players.filter(p => p.is_alive);
     const deadPlayers = game.players.filter(p => !p.is_alive);
 
-    useEffect(() => {
-        if (game.status !== 'playing') return;
-
-        const controller = new AbortController();
-
-        const interval = setInterval(async () => {
-            if (controller.signal.aborted) return;
-
-            try {
-                const resp = await fetch(heartbeat(game.id).url, {
-                    method: 'POST',
-                    signal: controller.signal,
-                    headers: {
-                        'X-Requested-With': 'XMLHttpRequest',
-                        'Accept': 'application/json',
-                    },
-                });
-
-                if (!resp.ok) return;
-
-                const data = await resp.json();
-
-                if (data.phase !== game.current_phase || data.status !== game.status || data.active_role !== game.active_role) {
-                    controller.abort();
-                    window.location.reload();
-                }
-            } catch {
-                // ignore
-            }
-        }, 2000);
-
-        return () => {
-            clearInterval(interval);
-            controller.abort();
-        };
-    }, [game.id, game.status, game.mode, game.current_phase, game.active_role]);
+    // useGameStream(game.id);
 
     return (
         <div className="mx-auto max-w-4xl">
@@ -1233,55 +1137,9 @@ function FinishedView({ game, isHost }: { game: Game; isHost: boolean }) {
 }
 
 export default function Show({ game, isHost, myPlayer, myRole, availableRoles }: Props) {
-    const [phaseEndsAt, setPhaseEndsAt] = useState<string | null>(game.phase_ends_at);
-    const [loaded, setLoaded] = useState(false);
+    const [phaseEndsAt] = useState<string | null>(game.phase_ends_at);
 
-    useEffect(() => {
-        setPhaseEndsAt(game.phase_ends_at);
-        setLoaded(true);
-    }, [game.phase_ends_at]);
-
-    useEffect(() => {
-        if (!loaded || game.status !== 'playing') return;
-
-        const controller = new AbortController();
-
-        const interval = setInterval(async () => {
-            if (controller.signal.aborted) return;
-
-            try {
-                const resp = await fetch(heartbeat(game.id).url, {
-                    method: 'POST',
-                    signal: controller.signal,
-                    headers: {
-                        'X-Requested-With': 'XMLHttpRequest',
-                        'Accept': 'application/json',
-                    },
-                });
-
-                if (!resp.ok) return;
-
-                const data = await resp.json();
-
-                if (data.phase !== game.current_phase || data.status !== game.status || data.active_role !== game.active_role) {
-                    controller.abort();
-                    window.location.reload();
-                    return;
-                }
-
-                if (data.phase_ends_at && data.phase_ends_at !== phaseEndsAt) {
-                    setPhaseEndsAt(data.phase_ends_at);
-                }
-            } catch {
-                // ignore abort/errors
-            }
-        }, 2000);
-
-        return () => {
-            clearInterval(interval);
-            controller.abort();
-        };
-    }, [loaded, game.id, game.status, game.mode, game.current_phase, game.active_role, phaseEndsAt]);
+    useGamePolling(game.id, game.status === 'playing' || game.status === 'waiting');
 
     if (game.status === 'waiting') {
         return (

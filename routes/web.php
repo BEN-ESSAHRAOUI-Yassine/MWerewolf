@@ -2,6 +2,7 @@
 
 use App\Http\Controllers\DashboardController;
 use App\Http\Controllers\Games\GameController;
+use App\Http\Controllers\Games\GameEventController;
 use App\Http\Controllers\Games\NarratorController;
 use App\Http\Controllers\Games\VoteController;
 use Illuminate\Support\Facades\Route;
@@ -37,6 +38,7 @@ Route::middleware(['auth', 'verified'])->group(function () {
         Route::post('{game}/conclude-night', [NarratorController::class, 'concludeNight'])->name('conclude-night');
 
         Route::post('{game}/vote', [VoteController::class, 'cast'])->name('vote');
+        Route::get('{game}/stream', [GameEventController::class, 'stream'])->name('stream');
     });
 });
 
